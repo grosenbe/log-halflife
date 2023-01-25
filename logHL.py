@@ -101,8 +101,6 @@ def HandleNameChange(dataStr: str):
 def ProcessLogMessages(data: bytes):
     """Apply the appropriate regular expression to log messages and handle them."""
     dataStr = str(data)
-    print(dataStr)
-
     logFileName = "/home/geoffrosenberg/Documents/connections.txt"
 
     connectedExpr = re.compile('\\bconnected')
