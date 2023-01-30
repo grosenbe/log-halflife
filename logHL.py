@@ -10,45 +10,60 @@ players = {}
 currentMap = 'crossfireXL'
 
 class Player:
-    def __init__(self, name: str):
+    def __init__(self, name: str, ip: str):
         self.name   = name
         self.kills  = 0
         self.deaths = 0
+        self.address = ip
 
 
-def PrintToConsole():
+def PrintToConsole(dataStr: str):
+    """Print to console for local logging."""
     global players
     global currentMap
     print("Current map: {0}".format(currentMap))
-    output=[]
-    for player in players:
-        output.append([players[player].name, players[player].kills, players[player].deaths])
-    print(tabulate(output, headers=["Player","Kills","Deaths"]))
+    scores=[]
+    for steamId in players:
+        scores.append([players[steamId].name, players[steamId].kills, players[steamId].deaths, steamId, players[steamId].address])
+    print(tabulate(scores, headers=["Player","Kills","Deaths", "Steam ID", "IP Address"]))
     sys.stdout.flush()
 
 
-def UpdateLogFile(fileName: str):
+def UpdateLogFile(fileName: str, dataStr: str):
     """Update the log file."""
+    playerName = GetPlayerNameAndId(dataStr)[0]
     with open(fileName, "w") as logfile:
+        logfile.write("New player: {0}\n".format(playerName))
         logfile.write("Current map: {0}\n".format(currentMap))
-        output=[]
+        logfile.write("\n")
+        logfile.write("Scoreboard\n")
+        scores=[]
         global players
-        for player in players:
-            output.append([players[player].name, players[player].kills, players[player].deaths])
-        logfile.write(tabulate(output, headers=["Player","Kills","Deaths"]))
+        for steamId in players:
+            scores.append([players[steamId].name, players[steamId].kills, players[steamId].deaths, steamId, players[steamId].address])
+        logfile.write(tabulate(scores, headers=["Player","Kills","Deaths","Steam ID", "IP Address"]))
         logfile.write("\n")
 
 
+def GetPlayerInfo(dataStr: str):
+    """Get player info from the connection message."""
+    expr = re.compile('\"((?:\\w+\\s*)+)<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)><.*>\".*\"((?:[0-9]+\.)+[0-9]+)')
+    matches = expr.search(dataStr)
+    playerNameIdIp = []
+    if matches is not None:
+        playerNameIdIp.append(matches.groups()[0]) # name
+        playerNameIdIp.append(matches.groups()[1]) # steam ID
+        playerNameIdIp.append(matches.groups()[2]) # IP Address
+    return playerNameIdIp
+
 def GetPlayerNameAndId(dataStr: str):
-    """Get player name from the beginning of the log string."""
-    expr = re.compile('\"((?:\\w+\\s*)+)<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)>')
+    """Get player name and ID."""
+    expr = re.compile('\"((?:\\w+\\s*)+)<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)')
     matches = expr.search(dataStr)
     playerNameAndId = []
     if matches is not None:
-        playerName = matches.groups()[0]
-        playerId = matches.groups()[1]
-        playerNameAndId.append(playerName)
-        playerNameAndId.append(playerId)
+        playerNameAndId.append(matches.groups()[0]) # name
+        playerNameAndId.append(matches.groups()[1]) # steam ID
     return playerNameAndId
 
 
@@ -62,16 +77,17 @@ def ResetScore():
 
 def AddPlayer(dataStr: str):
     """Add a new player."""
-    nameAndId = GetPlayerNameAndId(dataStr)
+    playerInfo = GetPlayerInfo(dataStr)
     global players
-    players[nameAndId[1]] = Player(nameAndId[0])
+    players[playerInfo[1]] = Player(playerInfo[0], playerInfo[2])
 
 
 def RemovePlayer(dataStr: str):
-    """Remove a plyer from the map."""
+    """Remove a player from the dictionary."""
     nameAndId = GetPlayerNameAndId(dataStr)
     global players
-    players.pop(nameAndId[1])
+    if nameAndId[1] in players:
+        players.pop(nameAndId[1])
 
 
 def UpdateScore(dataStr: str):
@@ -82,8 +98,9 @@ def UpdateScore(dataStr: str):
         idKiller = matches.groups()[0]
         idKillee = matches.groups()[1]
         global players
-        players[idKiller].kills  += 1
-        players[idKillee].deaths += 1
+        if idKiller in players and idKillee in players:
+            players[idKiller].kills  += 1
+            players[idKillee].deaths += 1
 
 
 def HandleMapChange(dataStr: str):
@@ -106,8 +123,9 @@ def HandleSuicide(dataStr: str):
         killPenalty = 0
 
     global players
-    players[id].kills  += killPenalty
-    players[id].deaths += 1
+    if id in players:
+        players[id].kills  += killPenalty
+        players[id].deaths += 1
 
 
 def HandleNameChange(dataStr: str):
@@ -118,7 +136,8 @@ def HandleNameChange(dataStr: str):
     if matches is not None:
         newName = matches.groups()[0]
         global players
-        players[id].name = newName
+        if id in players:
+            players[id].name = newName
 
 
 def ProcessLogMessages(data: bytes):
@@ -130,7 +149,7 @@ def ProcessLogMessages(data: bytes):
     connectedExpr = re.compile('\\bconnected')
     if connectedExpr.search(dataStr) is not None:
         AddPlayer(dataStr)
-        UpdateLogFile(logFileName)
+        UpdateLogFile(logFileName, dataStr)
         processedMessage = True
 
     disconnectedExpr = re.compile('\\bdisconnected')
@@ -162,7 +181,7 @@ def ProcessLogMessages(data: bytes):
         processedMessage = True
 
     if processedMessage == True:
-        PrintToConsole()
+        PrintToConsole(dataStr)
 
 
 if __name__ == "__main__":
