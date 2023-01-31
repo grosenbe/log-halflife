@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Log UDP messages from a Half-Life server."""
+from datetime import datetime, timezone
 import socket
 import re
 import os
 import sys
+import getpass
+import psycopg2
 from tabulate import tabulate
 
-players = {}
 currentMap = 'crossfireXL'
+conn = ''
+
 
 class Player:
+    """Player name, IP, and score."""
     def __init__(self, name: str, ip: str):
         self.name   = name
         self.kills  = 0
@@ -19,13 +24,15 @@ class Player:
 
 def PrintToConsole(dataStr: str):
     """Print to console for local logging."""
-    global players
     global currentMap
     print("Current map: {0}".format(currentMap))
-    scores=[]
-    for steamId in players:
-        scores.append([players[steamId].name, players[steamId].kills, players[steamId].deaths, steamId, players[steamId].address])
-    print(tabulate(scores, headers=["Player","Kills","Deaths", "Steam ID", "IP Address"]))
+    with conn.cursor() as cursor:
+        cursor.execute('SELECT * FROM scores')
+        rows = cursor.fetchall()
+        scores=[]
+        for row in rows:
+            scores.append([row[1], row[2], row[3], row[0], row[4]])
+            print(tabulate(scores, headers=["Player", "Kills", "Deaths", "Steam ID", "IP Address"]))
     sys.stdout.flush()
 
 
@@ -37,15 +44,17 @@ def UpdateLogFile(fileName: str, dataStr: str):
         logfile.write("Current map: {0}\n".format(currentMap))
         logfile.write("\n")
         logfile.write("Scoreboard\n")
-        scores=[]
-        global players
-        for steamId in players:
-            scores.append([players[steamId].name, players[steamId].kills, players[steamId].deaths, steamId, players[steamId].address])
-        logfile.write(tabulate(scores, headers=["Player","Kills","Deaths","Steam ID", "IP Address"]))
-        logfile.write("\n")
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT * from scores')
+            rows = cursor.fetchall()
+            scores=[]
+            for row in rows:
+                scores.append([row[1], row[2], row[3], row[0], row[4]])
+            logfile.write(tabulate(scores, headers=["Player", "Kills", "Deaths", "Steam ID", "IP Address"]))
+            logfile.write("\n")
 
 
-def GetPlayerInfo(dataStr: str):
+def GetPlayerConnectionInfo(dataStr: str):
     """Get player info from the connection message."""
     expr = re.compile('\"((?:\\w+\\s*)+)<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)><.*>\".*\"((?:[0-9]+\.)+[0-9]+)')
     matches = expr.search(dataStr)
@@ -55,6 +64,7 @@ def GetPlayerInfo(dataStr: str):
         playerNameIdIp.append(matches.groups()[1]) # steam ID
         playerNameIdIp.append(matches.groups()[2]) # IP Address
     return playerNameIdIp
+
 
 def GetPlayerNameAndId(dataStr: str):
     """Get player name and ID."""
@@ -69,25 +79,48 @@ def GetPlayerNameAndId(dataStr: str):
 
 def ResetScore():
     """Reset the score for all players."""
-    global players
-    for player in players:
-        players[player].kills = 0
-        players[player].deaths = 0
+    with conn.cursor() as cursor:
+        cursor.execute('UPDATE scores SET kills = 0')
+        cursor.execute('UPDATE scores SET deaths = 0')
+        conn.commit()
 
 
 def AddPlayer(dataStr: str):
     """Add a new player."""
-    playerInfo = GetPlayerInfo(dataStr)
-    global players
-    players[playerInfo[1]] = Player(playerInfo[0], playerInfo[2])
+    playerInfo = GetPlayerConnectionInfo(dataStr)
+    with conn.cursor() as cursor:
+        cursor.execute('INSERT INTO scores (steam_id, name, kills, deaths, ip_address) VALUES(%s, %s, %s, %s, %s)', (playerInfo[1], playerInfo[0], '0', '0', playerInfo[2]))
+
+        cursor.execute('SELECT * from playerhistory WHERE steam_id = ' + playerInfo[1])
+        rows = cursor.fetchall()
+        if rows:
+            updateCommand = "UPDATE playerhistory SET last_login = '{0}' WHERE steam_id = {1}".format(datetime.now(timezone.utc), playerInfo[1])
+            cursor.execute(updateCommand)
+        else:
+            cursor.execute('INSERT INTO playerhistory (steam_id, first_login, last_login) VALUES(%s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc)))
+
+        conn.commit()
+
+
+def EnsurePlayerExists(id):
+    """Ensure a player exists in the dictionary."""
+    with conn.cursor() as cursor:
+        cursor.execute('SELECT * FROM scores WHERE steam_id = ' + id)
+        rows = cursor.fetchall()
+
+        if rows:
+            return True
+        else:
+            return False
 
 
 def RemovePlayer(dataStr: str):
-    """Remove a player from the dictionary."""
+    """Remove a player from the database."""
     nameAndId = GetPlayerNameAndId(dataStr)
-    global players
-    if nameAndId[1] in players:
-        players.pop(nameAndId[1])
+    if EnsurePlayerExists(nameAndId[1]):
+        with conn.cursor() as cursor:
+            cursor.execute('DELETE FROM scores WHERE steam_id = %s', (nameAndId[1],))
+            conn.commit()
 
 
 def UpdateScore(dataStr: str):
@@ -97,10 +130,11 @@ def UpdateScore(dataStr: str):
     if matches is not None:
         idKiller = matches.groups()[0]
         idKillee = matches.groups()[1]
-        global players
-        if idKiller in players and idKillee in players:
-            players[idKiller].kills  += 1
-            players[idKillee].deaths += 1
+        if EnsurePlayerExists(idKiller) and EnsurePlayerExists(idKillee):
+            with conn.cursor() as cursor:
+                cursor.execute('UPDATE scores SET kills = kills+1 WHERE steam_id = %s', (idKiller,))
+                cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE steam_id = %s', (idKillee,))
+                conn.commit()
 
 
 def HandleMapChange(dataStr: str):
@@ -122,10 +156,11 @@ def HandleSuicide(dataStr: str):
     if matches is not None:
         killPenalty = 0
 
-    global players
-    if id in players:
-        players[id].kills  += killPenalty
-        players[id].deaths += 1
+    if EnsurePlayerExists(id):
+        with conn.cursor() as cursor:
+            cursor.execute('UPDATE scores SET deaths = deaths + 1 WHERE steam_id = %s', (id,))
+            cursor.execute('UPDATE scores SET kills = kills + %s WHERE steam_id = %s', (killPenalty, id,))
+            conn.commit()
 
 
 def HandleNameChange(dataStr: str):
@@ -135,9 +170,22 @@ def HandleNameChange(dataStr: str):
     matches = nameExpr.search(dataStr)
     if matches is not None:
         newName = matches.groups()[0]
-        global players
-        if id in players:
-            players[id].name = newName
+        if EnsurePlayerExists(id):
+            with conn.cursor() as cursor:
+                updateCommand = "UPDATE scores SET name = '{0}' WHERE steam_id = {1}".format(newName, id)
+                cursor.execute(updateCommand)
+                conn.commit()
+
+
+def IsPlayersTableEmpty():
+    """Check if there are any players in the scores relation."""
+    with conn.cursor() as cursor:
+        cursor.execute('SELECT * FROM scores')
+        rows = cursor.fetchall()
+        if rows:
+            return False
+        else:
+            return True
 
 
 def ProcessLogMessages(data: bytes):
@@ -155,8 +203,7 @@ def ProcessLogMessages(data: bytes):
     disconnectedExpr = re.compile('\\bdisconnected')
     if disconnectedExpr.search(dataStr) is not None:
         RemovePlayer(dataStr)
-        global players
-        if players == {} and os.path.exists(logFileName):
+        if IsPlayersTableEmpty() and os.path.exists(logFileName):
             os.remove(logFileName)
         processedMessage = True
 
@@ -191,6 +238,13 @@ if __name__ == "__main__":
     sock = socket.socket(socket.AF_INET,
                          socket.SOCK_DGRAM)
     sock.bind((UDP_IP, UDP_PORT))
+    password = getpass.getpass('Password for user halflife: ')
+    conn = psycopg2.connect(database='halflife', user='halflife', password=password, host='thebox', port=5432)
+
+    # initialize scoreboard as empty
+    with conn.cursor() as cursor:
+        cursor.execute('DELETE FROM scores')
+        conn.commit()
 
     while True:
         data, addr = sock.recvfrom(1024)
