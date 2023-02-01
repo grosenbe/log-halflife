@@ -97,13 +97,14 @@ def AddPlayer(dataStr: str):
             updateCommand = "UPDATE playerhistory SET last_login = '{0}' WHERE steam_id = {1}".format(datetime.now(timezone.utc), playerInfo[1])
             cursor.execute(updateCommand)
         else:
-            cursor.execute('INSERT INTO playerhistory (steam_id, first_login, last_login) VALUES(%s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc)))
+            # TODO Add to the 'aliases used' column if this is a new alias
+            cursor.execute('INSERT INTO playerhistory (steam_id, first_login, last_login, kills, deaths) VALUES(%s, %s, %s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc), 0, 0))
 
         conn.commit()
 
 
 def EnsurePlayerExists(id):
-    """Ensure a player exists in the dictionary."""
+    """Ensure a player exists in the scores table."""
     with conn.cursor() as cursor:
         cursor.execute('SELECT * FROM scores WHERE steam_id = ' + id)
         rows = cursor.fetchall()
@@ -134,6 +135,8 @@ def UpdateScore(dataStr: str):
             with conn.cursor() as cursor:
                 cursor.execute('UPDATE scores SET kills = kills+1 WHERE steam_id = %s', (idKiller,))
                 cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE steam_id = %s', (idKillee,))
+                cursor.execute('UPDATE playerhistory SET kills = kills+1 WHERE steam_id = %s', (idKiller,))
+                cursor.execute('UPDATE playerhistory SET deaths = deaths+1 WHERE steam_id = %s', (idKillee,))
                 conn.commit()
 
 
@@ -160,6 +163,8 @@ def HandleSuicide(dataStr: str):
         with conn.cursor() as cursor:
             cursor.execute('UPDATE scores SET deaths = deaths + 1 WHERE steam_id = %s', (id,))
             cursor.execute('UPDATE scores SET kills = kills + %s WHERE steam_id = %s', (killPenalty, id,))
+            cursor.execute('UPDATE playerhistory SET deaths = deaths + 1 WHERE steam_id = %s', (id,))
+            cursor.execute('UPDATE playerhistory SET kills = kills + %s WHERE steam_id = %s', (killPenalty, id,))
             conn.commit()
 
 
@@ -172,6 +177,7 @@ def HandleNameChange(dataStr: str):
         newName = matches.groups()[0]
         if EnsurePlayerExists(id):
             with conn.cursor() as cursor:
+                # TODO update the playerhistory.aliases_used list
                 updateCommand = "UPDATE scores SET name = '{0}' WHERE steam_id = {1}".format(newName, id)
                 cursor.execute(updateCommand)
                 conn.commit()
@@ -192,43 +198,33 @@ def ProcessLogMessages(data: bytes):
     """Apply the appropriate regular expression to log messages and handle them."""
     dataStr = str(data)
     logFileName = "/home/geoffrosenberg/Documents/connections.txt"
-    processedMessage = False
 
     connectedExpr = re.compile('\\bconnected')
     if connectedExpr.search(dataStr) is not None:
         AddPlayer(dataStr)
         UpdateLogFile(logFileName, dataStr)
-        processedMessage = True
 
     disconnectedExpr = re.compile('\\bdisconnected')
     if disconnectedExpr.search(dataStr) is not None:
         RemovePlayer(dataStr)
         if IsPlayersTableEmpty() and os.path.exists(logFileName):
             os.remove(logFileName)
-        processedMessage = True
 
     killedExpr = re.compile('\\bkilled')
     if killedExpr.search(dataStr) is not None:
         UpdateScore(dataStr)
-        processedMessage = True
 
     suicideExpr = re.compile('\\bsuicide')
     if suicideExpr.search(dataStr) is not None:
         HandleSuicide(dataStr)
-        processedMessage = True
 
     nameChangeExpr = re.compile('\" changed name to \"')
     if nameChangeExpr.search(dataStr) is not None:
         HandleNameChange(dataStr)
-        processedMessage = True
 
     mapChangeExpr = re.compile('Started map')
     if mapChangeExpr.search(dataStr) is not None:
         HandleMapChange(dataStr)
-        processedMessage = True
-
-    if processedMessage == True:
-        PrintToConsole(dataStr)
 
 
 if __name__ == "__main__":
