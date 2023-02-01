@@ -103,25 +103,12 @@ def AddPlayer(dataStr: str):
         conn.commit()
 
 
-def EnsurePlayerExists(id):
-    """Ensure a player exists in the scores table."""
-    with conn.cursor() as cursor:
-        cursor.execute('SELECT * FROM scores WHERE steam_id = ' + id)
-        rows = cursor.fetchall()
-
-        if rows:
-            return True
-        else:
-            return False
-
-
 def RemovePlayer(dataStr: str):
     """Remove a player from the database."""
     nameAndId = GetPlayerNameAndId(dataStr)
-    if EnsurePlayerExists(nameAndId[1]):
-        with conn.cursor() as cursor:
-            cursor.execute('DELETE FROM scores WHERE steam_id = %s', (nameAndId[1],))
-            conn.commit()
+    with conn.cursor() as cursor:
+        cursor.execute('DELETE FROM scores WHERE steam_id = %s', (nameAndId[1],))
+        conn.commit()
 
 
 def UpdateScore(dataStr: str):
@@ -131,13 +118,12 @@ def UpdateScore(dataStr: str):
     if matches is not None:
         idKiller = matches.groups()[0]
         idKillee = matches.groups()[1]
-        if EnsurePlayerExists(idKiller) and EnsurePlayerExists(idKillee):
-            with conn.cursor() as cursor:
-                cursor.execute('UPDATE scores SET kills = kills+1 WHERE steam_id = %s', (idKiller,))
-                cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE steam_id = %s', (idKillee,))
-                cursor.execute('UPDATE playerhistory SET kills = kills+1 WHERE steam_id = %s', (idKiller,))
-                cursor.execute('UPDATE playerhistory SET deaths = deaths+1 WHERE steam_id = %s', (idKillee,))
-                conn.commit()
+        with conn.cursor() as cursor:
+            cursor.execute('UPDATE scores SET kills = kills+1 WHERE steam_id = %s', (idKiller,))
+            cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE steam_id = %s', (idKillee,))
+            cursor.execute('UPDATE playerhistory SET kills = kills+1 WHERE steam_id = %s', (idKiller,))
+            cursor.execute('UPDATE playerhistory SET deaths = deaths+1 WHERE steam_id = %s', (idKillee,))
+            conn.commit()
 
 
 def HandleMapChange(dataStr: str):
@@ -159,13 +145,12 @@ def HandleSuicide(dataStr: str):
     if matches is not None:
         killPenalty = 0
 
-    if EnsurePlayerExists(id):
-        with conn.cursor() as cursor:
-            cursor.execute('UPDATE scores SET deaths = deaths + 1 WHERE steam_id = %s', (id,))
-            cursor.execute('UPDATE scores SET kills = kills + %s WHERE steam_id = %s', (killPenalty, id,))
-            cursor.execute('UPDATE playerhistory SET deaths = deaths + 1 WHERE steam_id = %s', (id,))
-            cursor.execute('UPDATE playerhistory SET kills = kills + %s WHERE steam_id = %s', (killPenalty, id,))
-            conn.commit()
+    with conn.cursor() as cursor:
+        cursor.execute('UPDATE scores SET deaths = deaths + 1 WHERE steam_id = %s', (id,))
+        cursor.execute('UPDATE scores SET kills = kills + %s WHERE steam_id = %s', (killPenalty, id,))
+        cursor.execute('UPDATE playerhistory SET deaths = deaths + 1 WHERE steam_id = %s', (id,))
+        cursor.execute('UPDATE playerhistory SET kills = kills + %s WHERE steam_id = %s', (killPenalty, id,))
+        conn.commit()
 
 
 def HandleNameChange(dataStr: str):
@@ -175,12 +160,11 @@ def HandleNameChange(dataStr: str):
     matches = nameExpr.search(dataStr)
     if matches is not None:
         newName = matches.groups()[0]
-        if EnsurePlayerExists(id):
-            with conn.cursor() as cursor:
-                # TODO update the playerhistory.aliases_used list
-                updateCommand = "UPDATE scores SET name = '{0}' WHERE steam_id = {1}".format(newName, id)
-                cursor.execute(updateCommand)
-                conn.commit()
+        with conn.cursor() as cursor:
+            # TODO update the playerhistory.aliases_used list
+            updateCommand = "UPDATE scores SET name = '{0}' WHERE steam_id = {1}".format(newName, id)
+            cursor.execute(updateCommand)
+            conn.commit()
 
 
 def IsPlayersTableEmpty():
