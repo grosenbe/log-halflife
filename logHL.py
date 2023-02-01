@@ -101,14 +101,11 @@ def AddPlayer(dataStr: str):
         rows = cursor.fetchall()
         if rows:
             updateCommand = "UPDATE playerhistory SET last_login = '{0}' WHERE steam_id = {1}".format(datetime.now(timezone.utc), playerInfo[1])
+            updateCommand = "UPDATE playerhistory SET logon_count = logon_count + 1 WHERE steam_id = {0}".format(playerInfo[1])
             cursor.execute(updateCommand)
         else:
             # TODO Add to the 'aliases used' column if this is a new alias
-            cursor.execute('INSERT INTO playerhistory (steam_id, first_login, '
-                           + 'last_login, kills, deaths) VALUES(%s, %s, %s,'
-                           + ' %s, %s)', (playerInfo[1],
-                                          datetime.now(timezone.utc),
-                                          datetime.now(timezone.utc), 0, 0))
+            cursor.execute('INSERT INTO playerhistory (steam_id, first_login, last_login, kills, deaths, logon_count) VALUES(%s, %s, %s, %s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc), 0, 0, 1))
 
         conn.commit()
 
