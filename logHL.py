@@ -16,8 +16,8 @@ conn = ''
 class Player:
     """Player name, IP, and score."""
     def __init__(self, name: str, ip: str):
-        self.name   = name
-        self.kills  = 0
+        self.name = name
+        self.kills = 0
         self.deaths = 0
         self.address = ip
 
@@ -29,10 +29,11 @@ def PrintToConsole(dataStr: str):
     with conn.cursor() as cursor:
         cursor.execute('SELECT * FROM scores')
         rows = cursor.fetchall()
-        scores=[]
+        scores = []
         for row in rows:
             scores.append([row[1], row[2], row[3], row[0], row[4]])
-            print(tabulate(scores, headers=["Player", "Kills", "Deaths", "Steam ID", "IP Address"]))
+            print(tabulate(scores, headers=["Player", "Kills", "Deaths",
+                                            "Steam ID", "IP Address"]))
     sys.stdout.flush()
 
 
@@ -47,10 +48,12 @@ def UpdateLogFile(fileName: str, dataStr: str):
         with conn.cursor() as cursor:
             cursor.execute('SELECT * from scores')
             rows = cursor.fetchall()
-            scores=[]
+            scores = []
             for row in rows:
                 scores.append([row[1], row[2], row[3], row[0], row[4]])
-            logfile.write(tabulate(scores, headers=["Player", "Kills", "Deaths", "Steam ID", "IP Address"]))
+            logfile.write(tabulate(scores, headers=["Player", "Kills",
+                                                    "Deaths", "Steam ID",
+                                                    "IP Address"]))
             logfile.write("\n")
 
 
@@ -60,9 +63,9 @@ def GetPlayerConnectionInfo(dataStr: str):
     matches = expr.search(dataStr)
     playerNameIdIp = []
     if matches is not None:
-        playerNameIdIp.append(matches.groups()[0]) # name
-        playerNameIdIp.append(matches.groups()[1]) # steam ID
-        playerNameIdIp.append(matches.groups()[2]) # IP Address
+        playerNameIdIp.append(matches.groups()[0])  # name
+        playerNameIdIp.append(matches.groups()[1])  # steam ID
+        playerNameIdIp.append(matches.groups()[2])  # IP Address
     return playerNameIdIp
 
 
@@ -72,8 +75,8 @@ def GetPlayerNameAndId(dataStr: str):
     matches = expr.search(dataStr)
     playerNameAndId = []
     if matches is not None:
-        playerNameAndId.append(matches.groups()[0]) # name
-        playerNameAndId.append(matches.groups()[1]) # steam ID
+        playerNameAndId.append(matches.groups()[0])  # name
+        playerNameAndId.append(matches.groups()[1])  # steam ID
     return playerNameAndId
 
 
@@ -89,16 +92,23 @@ def AddPlayer(dataStr: str):
     """Add a new player."""
     playerInfo = GetPlayerConnectionInfo(dataStr)
     with conn.cursor() as cursor:
-        cursor.execute('INSERT INTO scores (steam_id, name, kills, deaths, ip_address) VALUES(%s, %s, %s, %s, %s)', (playerInfo[1], playerInfo[0], '0', '0', playerInfo[2]))
+        cursor.execute('INSERT INTO scores (steam_id, name, kills, deaths, '
+                       + 'ip_address) VALUES(%s, %s, %s, %s, %s)',
+                       (playerInfo[1], playerInfo[0], '0', '0', playerInfo[2]))
 
-        cursor.execute('SELECT * from playerhistory WHERE steam_id = ' + playerInfo[1])
+        cursor.execute('SELECT * from playerhistory WHERE steam_id = '
+                       + playerInfo[1])
         rows = cursor.fetchall()
         if rows:
             updateCommand = "UPDATE playerhistory SET last_login = '{0}' WHERE steam_id = {1}".format(datetime.now(timezone.utc), playerInfo[1])
             cursor.execute(updateCommand)
         else:
             # TODO Add to the 'aliases used' column if this is a new alias
-            cursor.execute('INSERT INTO playerhistory (steam_id, first_login, last_login, kills, deaths) VALUES(%s, %s, %s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc), 0, 0))
+            cursor.execute('INSERT INTO playerhistory (steam_id, first_login, '
+                           + 'last_login, kills, deaths) VALUES(%s, %s, %s,'
+                           + ' %s, %s)', (playerInfo[1],
+                                          datetime.now(timezone.utc),
+                                          datetime.now(timezone.utc), 0, 0))
 
         conn.commit()
 
@@ -119,10 +129,14 @@ def UpdateScore(dataStr: str):
         idKiller = matches.groups()[0]
         idKillee = matches.groups()[1]
         with conn.cursor() as cursor:
-            cursor.execute('UPDATE scores SET kills = kills+1 WHERE steam_id = %s', (idKiller,))
-            cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE steam_id = %s', (idKillee,))
-            cursor.execute('UPDATE playerhistory SET kills = kills+1 WHERE steam_id = %s', (idKiller,))
-            cursor.execute('UPDATE playerhistory SET deaths = deaths+1 WHERE steam_id = %s', (idKillee,))
+            cursor.execute('UPDATE scores SET kills = kills+1 WHERE steam_id ='
+                           + ' %s', (idKiller,))
+            cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE steam_id'
+                           + ' = %s', (idKillee,))
+            cursor.execute('UPDATE playerhistory SET kills = kills+1 WHERE'
+                           + ' steam_id = %s', (idKiller,))
+            cursor.execute('UPDATE playerhistory SET deaths = deaths+1 WHERE '
+                           + 'steam_id = %s', (idKillee,))
             conn.commit()
 
 
@@ -146,10 +160,14 @@ def HandleSuicide(dataStr: str):
         killPenalty = 0
 
     with conn.cursor() as cursor:
-        cursor.execute('UPDATE scores SET deaths = deaths + 1 WHERE steam_id = %s', (id,))
-        cursor.execute('UPDATE scores SET kills = kills + %s WHERE steam_id = %s', (killPenalty, id,))
-        cursor.execute('UPDATE playerhistory SET deaths = deaths + 1 WHERE steam_id = %s', (id,))
-        cursor.execute('UPDATE playerhistory SET kills = kills + %s WHERE steam_id = %s', (killPenalty, id,))
+        cursor.execute('UPDATE scores SET deaths = deaths + 1 WHERE steam_id ='
+                       + ' %s', (id,))
+        cursor.execute('UPDATE scores SET kills = kills + %s WHERE steam_id ='
+                       + ' %s', (killPenalty, id,))
+        cursor.execute('UPDATE playerhistory SET deaths = deaths + 1 WHERE '
+                       + 'steam_id = %s', (id,))
+        cursor.execute('UPDATE playerhistory SET kills = kills + %s WHERE '
+                       + 'steam_id = %s', (killPenalty, id,))
         conn.commit()
 
 
@@ -219,7 +237,8 @@ if __name__ == "__main__":
                          socket.SOCK_DGRAM)
     sock.bind((UDP_IP, UDP_PORT))
     password = getpass.getpass('Password for user halflife: ')
-    conn = psycopg2.connect(database='halflife', user='halflife', password=password, host='thebox', port=5432)
+    conn = psycopg2.connect(database='halflife', user='halflife',
+                            password=password, host='thebox', port=5432)
 
     # initialize scoreboard as empty
     with conn.cursor() as cursor:
