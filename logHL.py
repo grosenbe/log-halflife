@@ -33,7 +33,7 @@ def PrintToConsole(dataStr: str):
         for row in rows:
             scores.append([row[1], row[2], row[3], row[0], row[4]])
             print(tabulate(scores, headers=["Player", "Kills", "Deaths",
-                                            "Steam ID", "IP Address"]))
+                                            "WON ID", "IP Address"]))
     sys.stdout.flush()
 
 
@@ -52,7 +52,7 @@ def UpdateLogFile(fileName: str, dataStr: str):
             for row in rows:
                 scores.append([row[1], row[2], row[3], row[0], row[4]])
             logfile.write(tabulate(scores, headers=["Player", "Kills",
-                                                    "Deaths", "Steam ID",
+                                                    "Deaths", "WON ID",
                                                     "IP Address"]))
             logfile.write("\n")
 
@@ -64,7 +64,7 @@ def GetPlayerConnectionInfo(dataStr: str):
     playerNameIdIp = []
     if matches is not None:
         playerNameIdIp.append(matches.groups()[0])  # name
-        playerNameIdIp.append(matches.groups()[1])  # steam ID
+        playerNameIdIp.append(matches.groups()[1])  # WON ID
         playerNameIdIp.append(matches.groups()[2])  # IP Address
     return playerNameIdIp
 
@@ -76,23 +76,23 @@ def GetPlayerNameAndId(dataStr: str):
     playerNameAndId = []
     if matches is not None:
         playerNameAndId.append(matches.groups()[0])  # name
-        playerNameAndId.append(matches.groups()[1])  # steam ID
+        playerNameAndId.append(matches.groups()[1])  # WON ID
     return playerNameAndId
 
 
 def ResetScore():
     """Reset the score for all players and update high score if applicable."""
     with conn.cursor() as cursor:
-        cursor.execute('SELECT steam_id, kills FROM scores')
+        cursor.execute('SELECT won_id, kills FROM scores')
         rows = cursor.fetchall()
         for row in rows:
-            steamId = row[0]
+            wonId = row[0]
             sessionKills = row[1]
-            cursor.execute("SELECT max_kills FROM playerhistory WHERE steam_id = {0}".format(steamId))
+            cursor.execute("SELECT max_kills FROM playerhistory WHERE won_id = {0}".format(wonId))
             newRow = cursor.fetchone()
             maxKills = newRow[0]
             if sessionKills > maxKills:
-                cursor.execute("UPDATE playerhistory SET max_kills = {0} WHERE steam_id = {1}".format(sessionKills, steamId))
+                cursor.execute("UPDATE playerhistory SET max_kills = {0} WHERE won_id = {1}".format(sessionKills, wonId))
                 conn.commit()
 
         cursor.execute('UPDATE scores SET kills = 0')
@@ -104,19 +104,19 @@ def AddPlayer(dataStr: str):
     """Add a new player."""
     playerInfo = GetPlayerConnectionInfo(dataStr)
     with conn.cursor() as cursor:
-        cursor.execute('INSERT INTO scores (steam_id, name, kills, deaths, '
+        cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, '
                        + 'ip_address) VALUES(%s, %s, %s, %s, %s)',
                        (playerInfo[1], playerInfo[0], '0', '0', playerInfo[2]))
         conn.commit()
 
-        cursor.execute('SELECT * from playerhistory WHERE steam_id = '
+        cursor.execute('SELECT * from playerhistory WHERE won_id = '
                        + playerInfo[1])
         rows = cursor.fetchall()
         if rows:
-            updateCommand = "UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1 WHERE steam_id = {1}".format(datetime.now(timezone.utc), playerInfo[1])
+            updateCommand = "UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1 WHERE won_id = {1}".format(datetime.now(timezone.utc), playerInfo[1])
             cursor.execute(updateCommand)
         else:
-            cursor.execute('INSERT INTO playerhistory (steam_id, first_login, last_login, kills, deaths, login_count, total_hours, max_kills) VALUES(%s, %s, %s, %s, %s, %s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc), 0, 0, 1, 0, 0))
+            cursor.execute('INSERT INTO playerhistory (won_id, first_login, last_login, kills, deaths, login_count, total_hours, max_kills) VALUES(%s, %s, %s, %s, %s, %s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc), 0, 0, 1, 0, 0))
         conn.commit()
 
 
@@ -124,21 +124,21 @@ def RemovePlayer(dataStr: str):
     """Remove a player from the scores table."""
     nameAndId = GetPlayerNameAndId(dataStr)
     with conn.cursor() as cursor:
-        cursor.execute('SELECT last_login, max_kills FROM playerhistory WHERE steam_id = '
+        cursor.execute('SELECT last_login, max_kills FROM playerhistory WHERE won_id = '
                        + nameAndId[1])
         row = cursor.fetchone()
         sessionStartTime = row[0]
         maxKills = row[1]
-        cursor.execute('SELECT kills FROM scores WHERE steam_id = ' + nameAndId[1])
+        cursor.execute('SELECT kills FROM scores WHERE won_id = ' + nameAndId[1])
         row = cursor.fetchone()
         sessionKills = row[0]
         sessionHours = (datetime.now(timezone.utc) - sessionStartTime).seconds / 3600
         if sessionKills > maxKills:
-            cursor.execute("UPDATE playerhistory SET total_hours = total_hours + {0}, max_kills = {1} WHERE steam_id = {2}".format(sessionHours, sessionKills, nameAndId[1]))
+            cursor.execute("UPDATE playerhistory SET total_hours = total_hours + {0}, max_kills = {1} WHERE won_id = {2}".format(sessionHours, sessionKills, nameAndId[1]))
         else:
-            cursor.execute("UPDATE playerhistory SET total_hours = total_hours + {0} WHERE steam_id = {1}".format(sessionHours, nameAndId[1]))
+            cursor.execute("UPDATE playerhistory SET total_hours = total_hours + {0} WHERE won_id = {1}".format(sessionHours, nameAndId[1]))
         conn.commit()
-        cursor.execute('DELETE FROM scores WHERE steam_id = %s', (nameAndId[1],))
+        cursor.execute('DELETE FROM scores WHERE won_id = %s', (nameAndId[1],))
         conn.commit()
 
 
@@ -150,14 +150,14 @@ def UpdateScore(dataStr: str):
         idKiller = matches.groups()[0]
         idKillee = matches.groups()[1]
         with conn.cursor() as cursor:
-            cursor.execute('UPDATE scores SET kills = kills+1 WHERE steam_id ='
+            cursor.execute('UPDATE scores SET kills = kills+1 WHERE won_id ='
                            + ' %s', (idKiller,))
-            cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE steam_id'
+            cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE won_id'
                            + ' = %s', (idKillee,))
             cursor.execute('UPDATE playerhistory SET kills = kills+1 WHERE'
-                           + ' steam_id = %s', (idKiller,))
+                           + ' won_id = %s', (idKiller,))
             cursor.execute('UPDATE playerhistory SET deaths = deaths+1 WHERE '
-                           + 'steam_id = %s', (idKillee,))
+                           + 'won_id = %s', (idKillee,))
             conn.commit()
 
 
@@ -181,14 +181,14 @@ def HandleSuicide(dataStr: str):
         killPenalty = 0
 
     with conn.cursor() as cursor:
-        cursor.execute('UPDATE scores SET deaths = deaths + 1 WHERE steam_id ='
+        cursor.execute('UPDATE scores SET deaths = deaths + 1 WHERE won_id ='
                        + ' %s', (id,))
-        cursor.execute('UPDATE scores SET kills = kills + %s WHERE steam_id ='
+        cursor.execute('UPDATE scores SET kills = kills + %s WHERE won_id ='
                        + ' %s', (killPenalty, id,))
         cursor.execute('UPDATE playerhistory SET deaths = deaths + 1 WHERE '
-                       + 'steam_id = %s', (id,))
+                       + 'won_id = %s', (id,))
         cursor.execute('UPDATE playerhistory SET kills = kills + %s WHERE '
-                       + 'steam_id = %s', (killPenalty, id,))
+                       + 'won_id = %s', (killPenalty, id,))
         conn.commit()
 
 
@@ -201,7 +201,7 @@ def HandleNameChange(dataStr: str):
         newName = matches.groups()[0]
         with conn.cursor() as cursor:
             # TODO update the playerhistory.aliases_used list
-            updateCommand = "UPDATE scores SET name = '{0}' WHERE steam_id = {1}".format(newName, id)
+            updateCommand = "UPDATE scores SET name = '{0}' WHERE won_id = {1}".format(newName, id)
             cursor.execute(updateCommand)
             conn.commit()
 
