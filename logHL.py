@@ -81,8 +81,20 @@ def GetPlayerNameAndId(dataStr: str):
 
 
 def ResetScore():
-    """Reset the score for all players."""
+    """Reset the score for all players and update high score if applicable."""
     with conn.cursor() as cursor:
+        cursor.execute('SELECT steam_id, kills FROM scores')
+        rows = cursor.fetchall()
+        for row in rows:
+            steamId = row[0]
+            sessionKills = row[1]
+            cursor.execute("SELECT max_kills FROM playerhistory WHERE steam_id = {0}".format(steamId))
+            newRow = cursor.fetchone()
+            maxKills = newRow[0]
+            if sessionKills > maxKills:
+                cursor.execute("UPDATE playerhistory SET max_kills = {0} WHERE steam_id = {1}".format(sessionKills, steamId))
+                conn.commit()
+
         cursor.execute('UPDATE scores SET kills = 0')
         cursor.execute('UPDATE scores SET deaths = 0')
         conn.commit()
@@ -95,25 +107,37 @@ def AddPlayer(dataStr: str):
         cursor.execute('INSERT INTO scores (steam_id, name, kills, deaths, '
                        + 'ip_address) VALUES(%s, %s, %s, %s, %s)',
                        (playerInfo[1], playerInfo[0], '0', '0', playerInfo[2]))
+        conn.commit()
 
         cursor.execute('SELECT * from playerhistory WHERE steam_id = '
                        + playerInfo[1])
         rows = cursor.fetchall()
         if rows:
-            updateCommand = "UPDATE playerhistory SET last_login = '{0}' WHERE steam_id = {1}".format(datetime.now(timezone.utc), playerInfo[1])
-            updateCommand = "UPDATE playerhistory SET logon_count = logon_count + 1 WHERE steam_id = {0}".format(playerInfo[1])
+            updateCommand = "UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1 WHERE steam_id = {1}".format(datetime.now(timezone.utc), playerInfo[1])
             cursor.execute(updateCommand)
         else:
-            # TODO Add to the 'aliases used' column if this is a new alias
-            cursor.execute('INSERT INTO playerhistory (steam_id, first_login, last_login, kills, deaths, logon_count) VALUES(%s, %s, %s, %s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc), 0, 0, 1))
-
+            cursor.execute('INSERT INTO playerhistory (steam_id, first_login, last_login, kills, deaths, login_count, total_hours, max_kills) VALUES(%s, %s, %s, %s, %s, %s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc), 0, 0, 1, 0, 0))
         conn.commit()
 
 
 def RemovePlayer(dataStr: str):
-    """Remove a player from the database."""
+    """Remove a player from the scores table."""
     nameAndId = GetPlayerNameAndId(dataStr)
     with conn.cursor() as cursor:
+        cursor.execute('SELECT last_login, max_kills FROM playerhistory WHERE steam_id = '
+                       + nameAndId[1])
+        row = cursor.fetchone()
+        sessionStartTime = row[0]
+        maxKills = row[1]
+        cursor.execute('SELECT kills FROM scores WHERE steam_id = ' + nameAndId[1])
+        row = cursor.fetchone()
+        sessionKills = row[0]
+        sessionHours = (datetime.now(timezone.utc) - sessionStartTime).seconds / 3600
+        if sessionKills > maxKills:
+            cursor.execute("UPDATE playerhistory SET total_hours = total_hours + {0}, max_kills = {1} WHERE steam_id = {2}".format(sessionHours, sessionKills, nameAndId[1]))
+        else:
+            cursor.execute("UPDATE playerhistory SET total_hours = total_hours + {0} WHERE steam_id = {1}".format(sessionHours, nameAndId[1]))
+        conn.commit()
         cursor.execute('DELETE FROM scores WHERE steam_id = %s', (nameAndId[1],))
         conn.commit()
 
