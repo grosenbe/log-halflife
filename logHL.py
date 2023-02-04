@@ -127,6 +127,9 @@ def AddPlayer(dataStr: str):
 def RemovePlayer(dataStr: str):
     """Remove a player from the scores table."""
     nameAndId = GetPlayerNameAndId(dataStr)
+    if not IsWonIdInPlayersTable(nameAndId[1]):
+        return
+
     with conn.cursor() as cursor:
         cursor.execute('SELECT last_login, max_kills FROM playerhistory WHERE won_id = '
                        + nameAndId[1])
