@@ -36,6 +36,7 @@ def PrintScoresToConsole(dataStr: str):
                                             "WON ID", "IP Address"]))
     sys.stdout.flush()
 
+
 def PrintDataStrToConsole(dataStr: str):
     print("Log Message: {0}".format(dataStr))
     sys.stdout.flush()
@@ -93,11 +94,12 @@ def ResetScore():
             wonId = row[0]
             sessionKills = row[1]
             cursor.execute("SELECT max_kills FROM playerhistory WHERE won_id = {0}".format(wonId))
-            newRow = cursor.fetchone()
-            maxKills = newRow[0]
-            if sessionKills > maxKills:
-                cursor.execute("UPDATE playerhistory SET max_kills = {0} WHERE won_id = {1}".format(sessionKills, wonId))
-                conn.commit()
+            row = cursor.fetchone()
+            if row:
+                maxKills = row[0]
+                if sessionKills > maxKills:
+                    cursor.execute("UPDATE playerhistory SET max_kills = {0} WHERE won_id = {1}".format(sessionKills, wonId))
+                    conn.commit()
 
         cursor.execute('UPDATE scores SET kills = 0')
         cursor.execute('UPDATE scores SET deaths = 0')
@@ -171,9 +173,9 @@ def UpdateScore(dataStr: str):
                 cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE won_id'
                                + ' = %s', (idKillee,))
             else:
-                cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, ip_address) VALUES(%s, %s, %s, %s)',
-                       (idKillee, nameKillew, 0, 1, "0.0.0.0"))
-                cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1 WHERE won_id = {1}".format(datetime.now(timezone.utc), idkillee))
+                cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, ip_address) VALUES(%s, %s, %s, %s, %s)',
+                       (idKillee, nameKillee, 0, 1, "0.0.0.0"))
+                cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1 WHERE won_id = {1}".format(datetime.now(timezone.utc), idKillee))
 
             cursor.execute('UPDATE playerhistory SET kills = kills+1 WHERE'
                            + ' won_id = %s', (idKiller,))
@@ -204,7 +206,7 @@ def HandleMapChange(dataStr: str):
 
 def HandleSuicide(dataStr: str):
     """Adjust a player's score after a self-kill."""
-    id = GetPlayerNameAndId(dataStr)[1]
+    nameAndId = GetPlayerNameAndId(dataStr)
     killPenalty = -1
     worldExpr = re.compile('world')
     matches = worldExpr.search(dataStr)
@@ -212,14 +214,20 @@ def HandleSuicide(dataStr: str):
         killPenalty = 0
 
     with conn.cursor() as cursor:
-        cursor.execute('UPDATE scores SET deaths = deaths + 1 WHERE won_id ='
-                       + ' %s', (id,))
-        cursor.execute('UPDATE scores SET kills = kills + %s WHERE won_id ='
-                       + ' %s', (killPenalty, id,))
+        if IsWonIdInPlayersTable(nameAndId[1]):
+            cursor.execute('UPDATE scores SET deaths = deaths + 1 WHERE won_id ='
+                           + ' %s', (nameAndId[1],))
+            cursor.execute('UPDATE scores SET kills = kills + %s WHERE won_id ='
+                           + ' %s', (killPenalty, nameAndId[1],))
+        else:
+            cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, ip_address) VALUES(%s, %s, %s, %s, %s)',
+                       (nameAndId[1], nameAndId[0], killPenalty, 1, "0.0.0.0"))
+            cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1 WHERE won_id = {1}".format(datetime.now(timezone.utc), nameAndId[1]))
+                
         cursor.execute('UPDATE playerhistory SET deaths = deaths + 1 WHERE '
-                       + 'won_id = %s', (id,))
+                       + 'won_id = %s', (nameAndId[1],))
         cursor.execute('UPDATE playerhistory SET kills = kills + %s WHERE '
-                       + 'won_id = %s', (killPenalty, id,))
+                       + 'won_id = %s', (killPenalty, nameAndId[1],))
         conn.commit()
 
 
