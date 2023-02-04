@@ -22,7 +22,7 @@ class Player:
         self.address = ip
 
 
-def PrintToConsole(dataStr: str):
+def PrintScoresToConsole(dataStr: str):
     """Print to console for local logging."""
     global currentMap
     print("Current map: {0}".format(currentMap))
@@ -36,8 +36,12 @@ def PrintToConsole(dataStr: str):
                                             "WON ID", "IP Address"]))
     sys.stdout.flush()
 
+def PrintDataStrToConsole(dataStr: str):
+    print("Log Message: {0}".format(dataStr))
+    sys.stdout.flush()
 
-def UpdateLogFile(fileName: str, dataStr: str):
+
+def PrintScoresToLogFile(fileName: str, dataStr: str):
     """Update the log file."""
     playerName = GetPlayerNameAndId(dataStr)[0]
     with open(fileName, "w") as logfile:
@@ -144,21 +148,45 @@ def RemovePlayer(dataStr: str):
 
 def UpdateScore(dataStr: str):
     """Update player scores when one player kills another."""
-    expr = re.compile('\"(?:\\w+\\s*)+<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)>.*\"(?:\\w+\\s*)+<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)>')
+    expr = re.compile('\"(\\w+\\s*)+<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)>.*\"(\\w+\\s*)+<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)>')
     matches = expr.search(dataStr)
     if matches is not None:
-        idKiller = matches.groups()[0]
-        idKillee = matches.groups()[1]
+        nameKiller = matches.groups()[0]
+        idKiller = matches.groups()[1]
+        nameKillee = matches.groups()[2]
+        idKillee = matches.groups()[3]
         with conn.cursor() as cursor:
-            cursor.execute('UPDATE scores SET kills = kills+1 WHERE won_id ='
-                           + ' %s', (idKiller,))
-            cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE won_id'
-                           + ' = %s', (idKillee,))
+            if IsWonIdInPlayersTable(idKiller):
+                cursor.execute('UPDATE scores SET kills = kills+1 WHERE won_id ='
+                               + ' %s', (idKiller,))
+            else:
+                cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, ip_address) VALUES(%s, %s, %s, %s, %s)',
+                       (idKiller, nameKiller, 1, 0, "0.0.0.0"))
+                cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1 WHERE won_id = {1}".format(datetime.now(timezone.utc), idKiller))
+
+            if IsWonIdInPlayersTable(idKillee):
+                cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE won_id'
+                               + ' = %s', (idKillee,))
+            else:
+                cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, ip_address) VALUES(%s, %s, %s, %s)',
+                       (idKillee, nameKillew, 0, 1, "0.0.0.0"))
+                cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1 WHERE won_id = {1}".format(datetime.now(timezone.utc), idkillee))
+
             cursor.execute('UPDATE playerhistory SET kills = kills+1 WHERE'
                            + ' won_id = %s', (idKiller,))
-            cursor.execute('UPDATE playerhistory SET deaths = deaths+1 WHERE '
-                           + 'won_id = %s', (idKillee,))
+            cursor.execute('UPDATE playerhistory SET deaths = deaths+1 WHERE'
+                           + ' won_id = %s', (idKillee,))
             conn.commit()
+
+
+def IsWonIdInPlayersTable(Id: str) -> bool:
+    with conn.cursor() as cursor:
+        cursor.execute('SELECT * FROM scores WHERE won_id = {0}'.format(Id))
+        row = cursor.fetchone()
+        if row:
+            return True
+        else:
+            return False
 
 
 def HandleMapChange(dataStr: str):
@@ -206,7 +234,7 @@ def HandleNameChange(dataStr: str):
             conn.commit()
 
 
-def IsPlayersTableEmpty():
+def IsScoresTableEmpty() -> bool:
     """Check if there are any players in the scores relation."""
     with conn.cursor() as cursor:
         cursor.execute('SELECT * FROM scores')
@@ -220,17 +248,18 @@ def IsPlayersTableEmpty():
 def ProcessLogMessages(data: bytes):
     """Apply the appropriate regular expression to log messages and handle them."""
     dataStr = str(data)
+    PrintDataStrToConsole(dataStr)
     logFileName = "/home/geoffrosenberg/Documents/connections.txt"
 
     connectedExpr = re.compile('\\bconnected')
     if connectedExpr.search(dataStr) is not None:
         AddPlayer(dataStr)
-        UpdateLogFile(logFileName, dataStr)
+        PrintScoresToLogFile(logFileName, dataStr)
 
     disconnectedExpr = re.compile('\\bdisconnected')
     if disconnectedExpr.search(dataStr) is not None:
         RemovePlayer(dataStr)
-        if IsPlayersTableEmpty() and os.path.exists(logFileName):
+        if IsScoresTableEmpty() and os.path.exists(logFileName):
             os.remove(logFileName)
 
     killedExpr = re.compile('\\bkilled')
