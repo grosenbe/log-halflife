@@ -119,10 +119,10 @@ def AddPlayer(dataStr: str):
                        + playerInfo[1])
         rows = cursor.fetchall()
         if rows:
-            updateCommand = "UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1 WHERE won_id = {1}".format(datetime.now(timezone.utc), playerInfo[1])
+            updateCommand = "UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1, most_recent_alias = '{1}' WHERE won_id = {2}".format(datetime.now(timezone.utc), playerInfo[0], playerInfo[1])
             cursor.execute(updateCommand)
         else:
-            cursor.execute('INSERT INTO playerhistory (won_id, first_login, last_login, kills, deaths, login_count, total_hours, max_kills) VALUES(%s, %s, %s, %s, %s, %s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc), 0, 0, 1, 0, 0))
+            cursor.execute('INSERT INTO playerhistory (won_id, first_login, last_login, kills, deaths, login_count, total_hours, max_kills, most_recent_alias) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc), 0, 0, 1, 0, 0, playerInfo[0]))
         conn.commit()
 
 
@@ -167,7 +167,7 @@ def UpdateScore(dataStr: str):
             else:
                 cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, ip_address) VALUES(%s, %s, %s, %s, %s)',
                        (idKiller, nameKiller, 1, 0, "0.0.0.0"))
-                cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1 WHERE won_id = {1}".format(datetime.now(timezone.utc), idKiller))
+                cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1, most_recent_alias = '{1}' WHERE won_id = {2}".format(datetime.now(timezone.utc), nameKiller, idKiller))
 
             if IsWonIdInPlayersTable(idKillee):
                 cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE won_id'
@@ -175,7 +175,7 @@ def UpdateScore(dataStr: str):
             else:
                 cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, ip_address) VALUES(%s, %s, %s, %s, %s)',
                        (idKillee, nameKillee, 0, 1, "0.0.0.0"))
-                cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1 WHERE won_id = {1}".format(datetime.now(timezone.utc), idKillee))
+                cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1, most_recent_alias = '{1}' WHERE won_id = {2}".format(datetime.now(timezone.utc), nameKillee, idKillee))
 
             cursor.execute('UPDATE playerhistory SET kills = kills+1 WHERE'
                            + ' won_id = %s', (idKiller,))
@@ -222,7 +222,7 @@ def HandleSuicide(dataStr: str):
         else:
             cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, ip_address) VALUES(%s, %s, %s, %s, %s)',
                        (nameAndId[1], nameAndId[0], killPenalty, 1, "0.0.0.0"))
-            cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1 WHERE won_id = {1}".format(datetime.now(timezone.utc), nameAndId[1]))
+            cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1, most_recent_alias = '{1}' WHERE won_id = {2}".format(datetime.now(timezone.utc), nameAndId[0], nameAndId[1]))
                 
         cursor.execute('UPDATE playerhistory SET deaths = deaths + 1 WHERE '
                        + 'won_id = %s', (nameAndId[1],))
@@ -239,9 +239,9 @@ def HandleNameChange(dataStr: str):
     if matches is not None:
         newName = matches.groups()[0]
         with conn.cursor() as cursor:
-            # TODO update the playerhistory.aliases_used list
             updateCommand = "UPDATE scores SET name = '{0}' WHERE won_id = {1}".format(newName, id)
             cursor.execute(updateCommand)
+            cursor.execute("UPDATE playerhistory SET most_recent_alias = '{0}' WHERE won_id = {1}".format(newName, id))
             conn.commit()
 
 
