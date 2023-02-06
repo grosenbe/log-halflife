@@ -99,21 +99,19 @@ def ResetScore():
                 maxKills = row[0]
                 if sessionKills > maxKills:
                     cursor.execute("UPDATE playerhistory SET max_kills = {0} WHERE won_id = {1}".format(sessionKills, wonId))
-                    conn.commit()
 
         cursor.execute('UPDATE scores SET kills = 0')
         cursor.execute('UPDATE scores SET deaths = 0')
-        conn.commit()
 
 
 def AddPlayer(dataStr: str):
     """Add a new player."""
     playerInfo = GetPlayerConnectionInfo(dataStr)
     with conn.cursor() as cursor:
-        cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, '
-                       + 'ip_address) VALUES(%s, %s, %s, %s, %s)',
-                       (playerInfo[1], playerInfo[0], '0', '0', playerInfo[2]))
-        conn.commit()
+        if not IsWonIdInScoresTable(playerInfo[1]):
+            cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, '
+                           + 'ip_address) VALUES(%s, %s, %s, %s, %s)',
+                           (playerInfo[1], playerInfo[0], '0', '0', playerInfo[2]))
 
         cursor.execute('SELECT * from playerhistory WHERE won_id = '
                        + playerInfo[1])
@@ -123,13 +121,18 @@ def AddPlayer(dataStr: str):
             cursor.execute(updateCommand)
         else:
             cursor.execute('INSERT INTO playerhistory (won_id, first_login, last_login, kills, deaths, login_count, total_hours, max_kills, most_recent_alias) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc), 0, 0, 1, 0, 0, playerInfo[0]))
-        conn.commit()
+
+        try:
+            cursor.execute('INSERT INTO playeraliases (won_id, alias) VALUES(%s, %s)', (playerInfo[1], playerInfo[0]))
+        except psycopg2.errors.UniqueViolation as e:
+            print(e, file=sys.stderr)
+
 
 
 def RemovePlayer(dataStr: str):
     """Remove a player from the scores table."""
     nameAndId = GetPlayerNameAndId(dataStr)
-    if not IsWonIdInPlayersTable(nameAndId[1]):
+    if not IsWonIdInScoresTable(nameAndId[1]):
         return
 
     with conn.cursor() as cursor:
@@ -146,9 +149,7 @@ def RemovePlayer(dataStr: str):
             cursor.execute("UPDATE playerhistory SET total_hours = total_hours + {0}, max_kills = {1} WHERE won_id = {2}".format(sessionHours, sessionKills, nameAndId[1]))
         else:
             cursor.execute("UPDATE playerhistory SET total_hours = total_hours + {0} WHERE won_id = {1}".format(sessionHours, nameAndId[1]))
-        conn.commit()
         cursor.execute('DELETE FROM scores WHERE won_id = %s', (nameAndId[1],))
-        conn.commit()
 
 
 def UpdateScore(dataStr: str):
@@ -161,7 +162,7 @@ def UpdateScore(dataStr: str):
         nameKillee = matches.groups()[2]
         idKillee = matches.groups()[3]
         with conn.cursor() as cursor:
-            if IsWonIdInPlayersTable(idKiller):
+            if IsWonIdInScoresTable(idKiller):
                 cursor.execute('UPDATE scores SET kills = kills+1 WHERE won_id ='
                                + ' %s', (idKiller,))
             else:
@@ -169,7 +170,12 @@ def UpdateScore(dataStr: str):
                        (idKiller, nameKiller, 1, 0, "0.0.0.0"))
                 cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1, most_recent_alias = '{1}' WHERE won_id = {2}".format(datetime.now(timezone.utc), nameKiller, idKiller))
 
-            if IsWonIdInPlayersTable(idKillee):
+                try:
+                    cursor.execute('INSERT INTO playeraliases (won_id, alias) VALUES(%s, %s)', (idKiller, nameKiller))
+                except psycopg2.errors.UniqueViolation as e:
+                    print(e, file=sys.stderr)
+
+            if IsWonIdInScoresTable(idKillee):
                 cursor.execute('UPDATE scores SET deaths = deaths+1 WHERE won_id'
                                + ' = %s', (idKillee,))
             else:
@@ -177,14 +183,18 @@ def UpdateScore(dataStr: str):
                        (idKillee, nameKillee, 0, 1, "0.0.0.0"))
                 cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1, most_recent_alias = '{1}' WHERE won_id = {2}".format(datetime.now(timezone.utc), nameKillee, idKillee))
 
+                try:
+                    cursor.execute('INSERT INTO playeraliases (won_id, alias) VALUES(%s, %s)', (idKillee, nameKillee))
+                except psycopg2.errors.UniqueViolation as e:
+                    print(e, file=sys.stderr)
+
             cursor.execute('UPDATE playerhistory SET kills = kills+1 WHERE'
                            + ' won_id = %s', (idKiller,))
             cursor.execute('UPDATE playerhistory SET deaths = deaths+1 WHERE'
                            + ' won_id = %s', (idKillee,))
-            conn.commit()
 
 
-def IsWonIdInPlayersTable(Id: str) -> bool:
+def IsWonIdInScoresTable(Id: str) -> bool:
     with conn.cursor() as cursor:
         cursor.execute('SELECT * FROM scores WHERE won_id = {0}'.format(Id))
         row = cursor.fetchone()
@@ -214,7 +224,7 @@ def HandleSuicide(dataStr: str):
         killPenalty = 0
 
     with conn.cursor() as cursor:
-        if IsWonIdInPlayersTable(nameAndId[1]):
+        if IsWonIdInScoresTable(nameAndId[1]):
             cursor.execute('UPDATE scores SET deaths = deaths + 1 WHERE won_id ='
                            + ' %s', (nameAndId[1],))
             cursor.execute('UPDATE scores SET kills = kills + %s WHERE won_id ='
@@ -223,12 +233,11 @@ def HandleSuicide(dataStr: str):
             cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, ip_address) VALUES(%s, %s, %s, %s, %s)',
                        (nameAndId[1], nameAndId[0], killPenalty, 1, "0.0.0.0"))
             cursor.execute("UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1, most_recent_alias = '{1}' WHERE won_id = {2}".format(datetime.now(timezone.utc), nameAndId[0], nameAndId[1]))
-                
+
         cursor.execute('UPDATE playerhistory SET deaths = deaths + 1 WHERE '
                        + 'won_id = %s', (nameAndId[1],))
         cursor.execute('UPDATE playerhistory SET kills = kills + %s WHERE '
                        + 'won_id = %s', (killPenalty, nameAndId[1],))
-        conn.commit()
 
 
 def HandleNameChange(dataStr: str):
@@ -236,13 +245,17 @@ def HandleNameChange(dataStr: str):
     id = GetPlayerNameAndId(dataStr)[1]
     nameExpr = re.compile('.*changed name to \"((?:\\w+\\s*)+)\"')
     matches = nameExpr.search(dataStr)
-    if matches is not None:
+    if matches:
         newName = matches.groups()[0]
         with conn.cursor() as cursor:
             updateCommand = "UPDATE scores SET name = '{0}' WHERE won_id = {1}".format(newName, id)
             cursor.execute(updateCommand)
             cursor.execute("UPDATE playerhistory SET most_recent_alias = '{0}' WHERE won_id = {1}".format(newName, id))
-            conn.commit()
+            try:
+                cursor.execute('INSERT INTO playeraliases (won_id, alias) VALUES(%s, %s)', (id, newName))
+            except psycopg2.errors.UniqueViolation as e:
+                print(e, file=sys.stderr)
+
 
 
 def IsScoresTableEmpty() -> bool:
@@ -300,11 +313,11 @@ if __name__ == "__main__":
     password = getpass.getpass('Password for user halflife: ')
     conn = psycopg2.connect(database='halflife', user='halflife',
                             password=password, host='thebox', port=5432)
+    conn.autocommit = True
 
     # initialize scoreboard as empty
     with conn.cursor() as cursor:
         cursor.execute('DELETE FROM scores')
-        conn.commit()
 
     while True:
         data, addr = sock.recvfrom(1024)
