@@ -9,16 +9,15 @@ import getpass
 import psycopg2
 from tabulate import tabulate
 
+pendingPlayers = {}
 currentMap = 'crossfireXL'
 conn = ''
 
 
-class Player:
-    """Player name, IP, and score."""
+class PlayerConnectionInfo:
+    """Player name, IP."""
     def __init__(self, name: str, ip: str):
         self.name = name
-        self.kills = 0
-        self.deaths = 0
         self.address = ip
 
 
@@ -62,16 +61,14 @@ def PrintScoresToLogFile(fileName: str, dataStr: str):
             logfile.write("\n")
 
 
-def GetPlayerConnectionInfo(dataStr: str):
+def InsertPlayerIntoPendingPlayers(dataStr: str):
     """Get player info from the connection message."""
     expr = re.compile('\"((?:\\w+\\s*)+)<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)><.*>\".*\"((?:[0-9]+\.)+[0-9]+)')
     matches = expr.search(dataStr)
-    playerNameIdIp = []
+    global pendingPlayers
     if matches is not None:
-        playerNameIdIp.append(matches.groups()[0])  # name
-        playerNameIdIp.append(matches.groups()[1])  # WON ID
-        playerNameIdIp.append(matches.groups()[2])  # IP Address
-    return playerNameIdIp
+        connectionInfo = PlayerConnectionInfo(matches.groups()[0], matches.groups()[2])
+        pendingPlayers[matches.groups()[1]] = connectionInfo
 
 
 def GetPlayerNameAndId(dataStr: str):
@@ -106,27 +103,38 @@ def ResetScore():
 
 def AddPlayer(dataStr: str):
     """Add a new player."""
-    playerInfo = GetPlayerConnectionInfo(dataStr)
+    playerNameAndId = GetPlayerNameAndId(dataStr)
+    global pendingPlayers
+    if playerNameAndId[1] not in pendingPlayers:
+        print("""Warning: cannot add player {0} (ID {1}) to the scores table because we never received a
+        connection message""".format(playerNameAndId[0], playerNameAndId[1]))
+        return
+
+    playerId = playerNameAndId[1]
+    playerConnectionInfo = pendingPlayers.pop(playerId)
+    playerName = playerConnectionInfo.name
+    playerIp = playerConnectionInfo.address
+
     with conn.cursor() as cursor:
-        if not IsWonIdInScoresTable(playerInfo[1]):
+        if not IsWonIdInScoresTable(playerId):
             cursor.execute('INSERT INTO scores (won_id, name, kills, deaths, '
                            + 'ip_address) VALUES(%s, %s, %s, %s, %s)',
-                           (playerInfo[1], playerInfo[0], '0', '0', playerInfo[2]))
+                           (playerId, playerName, '0', '0', playerIp))
 
         cursor.execute('SELECT * from playerhistory WHERE won_id = '
-                       + playerInfo[1])
+                       + playerId)
         rows = cursor.fetchall()
         if rows:
-            updateCommand = "UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1, most_recent_alias = '{1}' WHERE won_id = {2}".format(datetime.now(timezone.utc), playerInfo[0], playerInfo[1])
+            updateCommand = "UPDATE playerhistory SET last_login = '{0}', login_count = login_count + 1, most_recent_alias = '{1}' WHERE won_id = {2}".format(datetime.now(timezone.utc), playerName, playerId)
             cursor.execute(updateCommand)
         else:
-            cursor.execute('INSERT INTO playerhistory (won_id, first_login, last_login, kills, deaths, login_count, total_hours, max_kills, most_recent_alias) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)', (playerInfo[1], datetime.now(timezone.utc), datetime.now(timezone.utc), 0, 0, 1, 0, 0, playerInfo[0]))
+            cursor.execute('INSERT INTO playerhistory (won_id, first_login, last_login, kills, deaths, login_count, total_hours, max_kills, most_recent_alias) VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)', (playerId, datetime.now(timezone.utc), datetime.now(timezone.utc), 0, 0, 1, 0, 0, playerName))
 
         try:
-            cursor.execute('INSERT INTO playeraliases (won_id, alias) VALUES(%s, %s)', (playerInfo[1], playerInfo[0]))
+            cursor.execute('INSERT INTO playeraliases (won_id, alias) VALUES(%s, %s)', (playerId, playerName))
         except psycopg2.errors.UniqueViolation as e:
+            print("AddPlayer: error while inserting into playeraliaes table", file=sys.stderr)
             print(e, file=sys.stderr)
-
 
 
 def RemovePlayer(dataStr: str):
@@ -143,24 +151,27 @@ def RemovePlayer(dataStr: str):
         maxKills = row[1]
         cursor.execute('SELECT kills FROM scores WHERE won_id = ' + nameAndId[1])
         row = cursor.fetchone()
-        sessionKills = row[0]
-        sessionHours = (datetime.now(timezone.utc) - sessionStartTime).seconds / 3600
-        if sessionKills > maxKills:
-            cursor.execute("UPDATE playerhistory SET total_hours = total_hours + {0}, max_kills = {1} WHERE won_id = {2}".format(sessionHours, sessionKills, nameAndId[1]))
-        else:
-            cursor.execute("UPDATE playerhistory SET total_hours = total_hours + {0} WHERE won_id = {1}".format(sessionHours, nameAndId[1]))
-        cursor.execute('DELETE FROM scores WHERE won_id = %s', (nameAndId[1],))
+        if row:
+            sessionKills = row[0]
+            sessionHours = (datetime.now(timezone.utc) - sessionStartTime).seconds / 3600
+            if sessionKills > maxKills:
+                cursor.execute("UPDATE playerhistory SET total_hours = total_hours + {0}, max_kills = {1} WHERE won_id = {2}".format(sessionHours, sessionKills, nameAndId[1]))
+            else:
+                cursor.execute("UPDATE playerhistory SET total_hours = total_hours + {0} WHERE won_id = {1}".format(sessionHours, nameAndId[1]))
+
+            cursor.execute('DELETE FROM scores WHERE won_id = %s', (nameAndId[1],))
 
 
 def UpdateScore(dataStr: str):
     """Update player scores when one player kills another."""
-    expr = re.compile('\"(\\w+\\s*)+<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)>.*\"(\\w+\\s*)+<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)>')
+    expr = re.compile('\"(\\w+\\s*)+<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)>.*\"(\\w+\\s*)+<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)>.*with\\s\"(.*)\"')
     matches = expr.search(dataStr)
     if matches is not None:
         nameKiller = matches.groups()[0]
         idKiller = matches.groups()[1]
         nameKillee = matches.groups()[2]
         idKillee = matches.groups()[3]
+        weapon = matches.groups()[4]
         with conn.cursor() as cursor:
             if IsWonIdInScoresTable(idKiller):
                 cursor.execute('UPDATE scores SET kills = kills+1 WHERE won_id ='
@@ -186,12 +197,24 @@ def UpdateScore(dataStr: str):
                 try:
                     cursor.execute('INSERT INTO playeraliases (won_id, alias) VALUES(%s, %s)', (idKillee, nameKillee))
                 except psycopg2.errors.UniqueViolation as e:
+                    print("Error while inserting into playeraliases:", file=sys.stderr)
                     print(e, file=sys.stderr)
 
             cursor.execute('UPDATE playerhistory SET kills = kills+1 WHERE'
                            + ' won_id = %s', (idKiller,))
             cursor.execute('UPDATE playerhistory SET deaths = deaths+1 WHERE'
                            + ' won_id = %s', (idKillee,))
+            cursor.execute("SELECT * FROM playerweapons WHERE won_id = {0}".format(idKiller))
+            rows = cursor.fetchone()
+            if not rows:
+                cursor.execute('INSERT INTO playerweapons (won_id) VALUES(%s)', idKiller)
+
+            if weapon == "357":
+                cursor.execute("UPDATE playerweapons SET magnum = magnum + 1 WHERE won_id = {0}".format(idKiller))
+            elif weapon == "9mmAR":
+                cursor.execute("UPDATE playerweapons SET mp5 = mp5 + 1 WHERE won_id = {0}".format(idKiller))
+            else:
+                cursor.execute("UPDATE playerweapons SET {0} = {0} + 1 WHERE won_id = {1}".format(weapon, idKiller))
 
 
 def IsWonIdInScoresTable(Id: str) -> bool:
@@ -257,7 +280,6 @@ def HandleNameChange(dataStr: str):
                 print(e, file=sys.stderr)
 
 
-
 def IsScoresTableEmpty() -> bool:
     """Check if there are any players in the scores relation."""
     with conn.cursor() as cursor:
@@ -277,6 +299,10 @@ def ProcessLogMessages(data: bytes):
 
     connectedExpr = re.compile('\\bconnected')
     if connectedExpr.search(dataStr) is not None:
+        InsertPlayerIntoPendingPlayers(dataStr)
+
+    enteredExpr = re.compile('\\bentered the game')
+    if enteredExpr.search(dataStr) is not None:
         AddPlayer(dataStr)
         PrintScoresToLogFile(logFileName, dataStr)
 
