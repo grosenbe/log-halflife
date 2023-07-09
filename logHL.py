@@ -345,6 +345,15 @@ if __name__ == "__main__":
     with conn.cursor() as cursor:
         cursor.execute('DELETE FROM scores')
 
-    while True:
-        data, addr = sock.recvfrom(1024)
-        ProcessLogMessages(data)
+    try:
+        while True:
+            data, addr = sock.recvfrom(1024)
+            ProcessLogMessages(data)
+
+    except:
+        e = sys.exec_info()[0]
+        print("Error: Caught a top level exception:")
+        print(e)
+        print("Cleaning up")
+        with conn.cursor() as cursor:
+            cursor.execute('DELETE FROM scores')
