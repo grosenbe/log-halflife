@@ -63,7 +63,7 @@ def PrintScoresToLogFile(fileName: str, dataStr: str):
 
 def InsertPlayerIntoPendingPlayers(dataStr: str):
     """Get player info from the connection message."""
-    expr = re.compile('\"((?:\\w+\\s*)+)<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)><.*>\".*\"((?:[0-9]+\.)+[0-9]+)')
+    expr = re.compile('\"(.+)<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)><.*>\".*\"((?:[0-9]+\.)+[0-9]+)')
     matches = expr.search(dataStr)
     global pendingPlayers
     if matches is not None:
@@ -73,7 +73,7 @@ def InsertPlayerIntoPendingPlayers(dataStr: str):
 
 def GetPlayerNameAndId(dataStr: str):
     """Get player name and ID."""
-    expr = re.compile('\"((?:\\w+\\s*)+)<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)')
+    expr = re.compile('\"(.+)<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)')
     matches = expr.search(dataStr)
     playerNameAndId = []
     if matches is not None:
