@@ -8,9 +8,10 @@ import sys
 import getpass
 import psycopg2
 from tabulate import tabulate
+import traceback
 
-pendingPlayers = {}
-currentMap = 'crossfireXL'
+connectedPlayers = {}
+currentMap = 'mario_sewer'
 conn = ''
 
 
@@ -19,21 +20,6 @@ class PlayerConnectionInfo:
     def __init__(self, name: str, ip: str):
         self.name = name
         self.address = ip
-
-
-def PrintScoresToConsole(dataStr: str):
-    """Print to console for local logging."""
-    global currentMap
-    print("Current map: {0}".format(currentMap))
-    with conn.cursor() as cursor:
-        cursor.execute('SELECT * FROM scores')
-        rows = cursor.fetchall()
-        scores = []
-        for row in rows:
-            scores.append([row[1], row[2], row[3], row[0], row[4]])
-            print(tabulate(scores, headers=["Player", "Kills", "Deaths",
-                                            "WON ID", "IP Address"]))
-    sys.stdout.flush()
 
 
 def PrintDataStrToConsole(dataStr: str):
@@ -61,14 +47,14 @@ def PrintScoresToLogFile(fileName: str, dataStr: str):
             logfile.write("\n")
 
 
-def InsertPlayerIntoPendingPlayers(dataStr: str):
+def InsertPlayerIntoConnectedPlayers(dataStr: str):
     """Get player info from the connection message."""
     expr = re.compile('\"(.+)<[0-9]+><STEAM_[0-9]:[0-9]:([0-9]+)><.*>\".*\"((?:[0-9]+\.)+[0-9]+)')
     matches = expr.search(dataStr)
-    global pendingPlayers
+    global connectedPlayers
     if matches is not None:
         connectionInfo = PlayerConnectionInfo(matches.groups()[0], matches.groups()[2])
-        pendingPlayers[matches.groups()[1]] = connectionInfo
+        connectedPlayers[matches.groups()[1]] = connectionInfo
 
 
 def GetPlayerNameAndId(dataStr: str):
@@ -85,33 +71,35 @@ def GetPlayerNameAndId(dataStr: str):
 def ResetScore():
     """Reset the score for all players and update high score if applicable."""
     with conn.cursor() as cursor:
-        cursor.execute('SELECT won_id, kills FROM scores')
+        cursor.execute('SELECT won_id, kills, name FROM scores')
         rows = cursor.fetchall()
         for row in rows:
             wonId = row[0]
             sessionKills = row[1]
-            cursor.execute("SELECT max_kills FROM playerhistory WHERE won_id = {0}".format(wonId))
-            row = cursor.fetchone()
-            if row:
+            cursor.execute("SELECT max_kills FROM playerhistory WHERE won_id = %s", (wonId,))
+            history = cursor.fetchone()
+            if history:
                 maxKills = row[0]
                 if sessionKills > maxKills:
-                    cursor.execute("UPDATE playerhistory SET max_kills = {0} WHERE won_id = {1}".format(sessionKills, wonId))
+                    cursor.execute("UPDATE playerhistory SET max_kills = %s WHERE won_id = %s", (sessionKills, wonId,))
 
-        cursor.execute('UPDATE scores SET kills = 0')
-        cursor.execute('UPDATE scores SET deaths = 0')
+            nameAndId = []
+            nameAndId.append(row[2])
+            nameAndId.append(row[0])
+            RemovePlayer(nameAndId)
 
 
 def AddPlayer(dataStr: str):
     """Add a new player."""
     playerNameAndId = GetPlayerNameAndId(dataStr)
-    global pendingPlayers
-    if playerNameAndId[1] not in pendingPlayers:
+    global connectedPlayers
+    if playerNameAndId[1] not in connectedPlayers:
         print("""Warning: cannot add player {0} (ID {1}) to the scores table because we never received a
         connection message""".format(playerNameAndId[0], playerNameAndId[1]))
         return
 
     playerId = playerNameAndId[1]
-    playerConnectionInfo = pendingPlayers.pop(playerId)
+    playerConnectionInfo = connectedPlayers[playerId]
     playerName = playerConnectionInfo.name
     playerIp = playerConnectionInfo.address
 
@@ -136,29 +124,28 @@ def AddPlayer(dataStr: str):
             print(e, file=sys.stderr)
 
 
-def RemovePlayer(dataStr: str):
+def RemovePlayer(nameAndId):
     """Remove a player from the scores table."""
-    nameAndId = GetPlayerNameAndId(dataStr)
     if not IsWonIdInScoresTable(nameAndId[1]):
         return
 
     with conn.cursor() as cursor:
         cursor.execute('SELECT last_login, max_kills FROM playerhistory WHERE won_id = '
-                       + nameAndId[1])
+                       + str(nameAndId[1]))
         row = cursor.fetchone()
         sessionStartTime = row[0]
         maxKills = row[1]
-        cursor.execute('SELECT kills FROM scores WHERE won_id = ' + nameAndId[1])
+        cursor.execute('SELECT kills FROM scores WHERE won_id = ' + str(nameAndId[1]))
         row = cursor.fetchone()
         if row:
             sessionKills = row[0]
             sessionHours = (datetime.now(timezone.utc) - sessionStartTime).seconds / 3600
             if sessionKills > maxKills:
-                cursor.execute("UPDATE playerhistory SET total_hours=total_hours+{0}, hours_logged_weekly=hours_logged_weekly+{1}, max_kills={2} WHERE won_id = {3}".format(sessionHours, sessionHours, sessionKills, nameAndId[1]))
+                cursor.execute("UPDATE playerhistory SET total_hours=total_hours+{0}, hours_logged_weekly=hours_logged_weekly+{1}, max_kills={2} WHERE won_id = {3}".format(sessionHours, sessionHours, sessionKills, str(nameAndId[1])))
             else:
-                cursor.execute("UPDATE playerhistory SET total_hours=total_hours+{0}, hours_logged_weekly=hours_logged_weekly+{1} WHERE won_id = {2}".format(sessionHours, sessionHours, nameAndId[1]))
+                cursor.execute("UPDATE playerhistory SET total_hours=total_hours+{0}, hours_logged_weekly=hours_logged_weekly+{1} WHERE won_id = {2}".format(sessionHours, sessionHours, str(nameAndId[1])))
 
-            cursor.execute('DELETE FROM scores WHERE won_id = %s', (nameAndId[1],))
+            cursor.execute('DELETE FROM scores WHERE won_id = %s', (str(nameAndId[1]),))
 
 
 def UpdateScore(dataStr: str):
@@ -203,7 +190,7 @@ def UpdateScore(dataStr: str):
                            + ' won_id = %s', (idKiller,))
             cursor.execute('UPDATE playerhistory SET deaths=deaths+1, deaths_weekly=deaths_weekly+1 WHERE'
                            + ' won_id = %s', (idKillee,))
-            cursor.execute("SELECT * FROM playerweapons WHERE won_id = {0}".format(idKiller))
+            cursor.execute("SELECT * FROM playerweapons WHERE won_id = %s", (idKiller,))
             rows = cursor.fetchone()
             if not rows:
                 cursor.execute("INSERT INTO playerweapons (won_id) VALUES({0})".format(idKiller))
@@ -220,7 +207,7 @@ def UpdateScore(dataStr: str):
 
 def IsWonIdInScoresTable(Id: str) -> bool:
     with conn.cursor() as cursor:
-        cursor.execute('SELECT * FROM scores WHERE won_id = {0}'.format(Id))
+        cursor.execute('SELECT * FROM scores WHERE won_id = %s', (Id,))
         row = cursor.fetchone()
         if row:
             return True
@@ -276,7 +263,7 @@ def HandleNameChange(dataStr: str):
             cursor.execute(updateCommand, (newName, id,))
             cursor.execute("UPDATE playerhistory SET most_recent_alias = %s WHERE won_id = %s", (newName, id,))
             try:
-                cursor.execute('INSERT INTO playeraliases (won_id, alias) VALUES(%s, %s)', (id, newName))
+                cursor.execute('INSERT INTO playeraliases (won_id, alias) VALUES(%s, %s)', (id, newName,))
             except psycopg2.errors.UniqueViolation as e:
                 print(e, file=sys.stderr)
 
@@ -300,7 +287,7 @@ def ProcessLogMessages(data: bytes):
 
     connectedExpr = re.compile('\\bconnected')
     if connectedExpr.search(dataStr) is not None:
-        InsertPlayerIntoPendingPlayers(dataStr)
+        InsertPlayerIntoConnectedPlayers(dataStr)
 
     enteredExpr = re.compile('\\bentered the game')
     if enteredExpr.search(dataStr) is not None:
@@ -309,7 +296,8 @@ def ProcessLogMessages(data: bytes):
 
     disconnectedExpr = re.compile('\\bdisconnected')
     if disconnectedExpr.search(dataStr) is not None:
-        RemovePlayer(dataStr)
+        nameAndId = GetPlayerNameAndId(dataStr)
+        RemovePlayer(nameAndId)
         if IsScoresTableEmpty() and os.path.exists(logFileName):
             os.remove(logFileName)
 
@@ -339,7 +327,7 @@ if __name__ == "__main__":
     sock.bind((UDP_IP, UDP_PORT))
     password = getpass.getpass('Password for user halflife: ')
     conn = psycopg2.connect(database='halflife', user='halflife',
-                            password=password, host='thebox', port=5432)
+                            password=password, host='192.168.1.6', port=5432)
     conn.autocommit = True
 
     # initialize scoreboard as empty
@@ -352,7 +340,7 @@ if __name__ == "__main__":
             ProcessLogMessages(data)
 
     except:
-        e = sys.exec_info()[0]
+        e = traceback.format_exc()
         print("Error: Caught a top level exception:")
         print(e)
         print("Cleaning up")
